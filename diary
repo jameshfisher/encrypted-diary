@@ -1,0 +1,60 @@
+#!/bin/bash
+set -ue
+root_dir="~/.diary"
+priv_key_path="${root_dir}/priv.pem"
+pub_key_path="${root_dir}/pub.pem"
+function usage {
+  echo "Usage:"
+  echo "  ${0} init                 Initialize the database"
+  echo "  ${0} write                Write a diary entry"
+  echo "  ${0} read entry_dir...    Read the specified entries"
+  exit 1
+}
+if [ "$#" -lt 1 ]; then usage; fi
+case "${1}" in
+  init )
+    if [ -e "${root_dir}"      ]; then echo "${root_dir} already exists"; exit 1; fi
+    if [ -e "${priv_key_path}" ]; then echo "Refusing to overwrite ${priv_key_path}"; exit 1; fi
+    if [ -e "${pub_key_path}"  ]; then echo "Refusing to overwrite ${pub_key_path}";  exit 1; fi
+    read -s -p "Password to encrypt private key: " password; echo
+    mkdir "${root_dir}"
+    cd "${root_dir}"
+    git init
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+      | PASSWORD="${password}" openssl pkey -passout env:PASSWORD > "${priv_key_path}"
+    PASSWORD="${password}" < "${priv_key_path}" openssl pkey -passin env:PASSWORD -pubout > "${pub_key_path}"
+    git add "${priv_key_path}" "${pub_key_path}"
+    git commit -m "New keypair for diary"
+    echo "Initialized diary DB in ${root_dir}"
+    ;;
+  write )
+    if ! [ -e "${pub_key_path}" ]; then echo "No ${pub_key_path}. Maybe run '${0} init'?"; exit 1; fi
+    entry_id="$(date -u "+%Y-%m-%dT%H:%M:%SZ")"
+    entry_dir="${root_dir}/${entry_id}"
+    secret="$(openssl rand 32 | base64)"
+    mkdir "${entry_dir}"
+    stty -echo
+    echo "Start writing. EOF (Ctrl-D) finishes the entry."
+    SECRET="${secret}" < /dev/stdin openssl enc -AES-256-CBC -pass env:SECRET > "${entry_dir}/ciphertext"
+    stty echo
+    <<< "${secret}" openssl pkeyutl -encrypt -pubin -inkey "${pub_key_path}" > "${entry_dir}/secret"
+    cd "${root_dir}"
+    git add "${entry_dir}"
+    git commit -m "${entry_id}"
+    echo "Written encrypted entry to ${entry_dir}/"
+    ;;
+  read )
+    read -s -p "Password to decrypt private key: " password; echo
+    {
+      for ((i = 2; i <= $#; i++)); do
+        entry_dir="${root_dir}/${!i}"
+        secret="$( PASSWORD="${password}" < "${entry_dir}/secret" openssl pkeyutl -decrypt -inkey "${priv_key_path}" -passin env:PASSWORD )"
+        echo "${!i}"
+        SECRET="${secret}" < "${entry_dir}/ciphertext" openssl enc -d -AES-256-CBC -pass env:SECRET | fold | sed -e 's/^/    /'
+      done
+    } | less
+    ;;
+  * )
+    usage
+    ;;
+esac
