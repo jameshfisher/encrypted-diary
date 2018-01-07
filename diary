@@ -1,6 +1,6 @@
 #!/bin/bash
 set -ue
-root_dir="~/.diary"
+root_dir=~/.diary
 priv_key_path="${root_dir}/priv.pem"
 pub_key_path="${root_dir}/pub.pem"
 function usage {
@@ -42,6 +42,10 @@ case "${1}" in
     git add "${entry_dir}"
     git commit -m "${entry_id}"
     echo "Written encrypted entry to ${entry_dir}/"
+    if git remote | grep '^origin$'; then
+      echo "Pushing to $(git remote get-url origin) ..."
+      git push origin
+    fi
     ;;
   read )
     read -s -p "Password to decrypt private key: " password; echo
