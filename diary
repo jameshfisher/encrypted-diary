@@ -1,10 +1,10 @@
-#!/bin/bash
-set -ue
+#!/bin/bash -ue
 db_dir=~/.diary
 entries_dir="${db_dir}/entries"
 priv_key_path="${db_dir}/priv.pem"
 pub_key_path="${db_dir}/pub.pem"
-program_name=$(basename "${0}")
+program_name="$(basename "${0}")"
+prompts_path="$(dirname "${0}")/prompts"
 function usage {
   echo "Usage:"
   echo "  ${program_name} init                                Initialize the database"
@@ -31,15 +31,25 @@ case "${1}" in
     git commit -m "New keypair for diary"
     echo "Initialized diary DB in ${db_dir}"
     ;;
-  write )
+  write | prompt )
     if ! [ -e "${pub_key_path}" ]; then echo "No ${pub_key_path}. Maybe run '${0} init'?"; exit 1; fi
     entry_id="$(date -u "+%Y-%m-%dT%H:%M:%SZ")"
     entry_dir="${entries_dir}/${entry_id}"
     secret="$(openssl rand 32 | base64)"
     mkdir "${entry_dir}"
     stty -echo
-    echo "Start writing. EOF (Ctrl-D) finishes the entry."
-    SECRET="${secret}" < /dev/stdin openssl enc -AES-256-CBC -pass env:SECRET > "${entry_dir}/ciphertext"
+    if test "${1}" = "prompt"; then
+      prompt=$(sort -R "${prompts_path}" | head -1)
+      printf "Prompt: %s\n" "${prompt}"
+      echo "Start writing. EOF (Ctrl-D) finishes the entry."
+      cat <(printf "Prompt: ${prompt}\n") - </dev/stdin | \
+        SECRET="${secret}" openssl enc -AES-256-CBC -pass env:SECRET \
+        > "${entry_dir}/ciphertext"
+    else
+      echo "Start writing. EOF (Ctrl-D) finishes the entry."
+      SECRET="${secret}" </dev/stdin openssl enc -AES-256-CBC -pass env:SECRET \
+        > "${entry_dir}/ciphertext"
+    fi
     stty echo
     <<< "${secret}" openssl pkeyutl -encrypt -pubin -inkey "${pub_key_path}" > "${entry_dir}/secret"
     cd "${db_dir}"
